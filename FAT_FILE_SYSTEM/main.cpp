@@ -1,5 +1,7 @@
 #include<stdio.h>
 #include "initial.h"
+#include "version.h"
+#include "fat_file_system.h"
 #include<iostream>
 using namespace std;
 
@@ -26,6 +28,7 @@ int main() {
 		case 2:
 			break;
 		case 3:
+			print_version_details();
 			break;
 		case 0:
 			return 0;

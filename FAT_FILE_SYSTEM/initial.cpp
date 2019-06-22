@@ -69,18 +69,31 @@ int allocate_disk() {
 	fwrite(end, sizeof(end), 1, fp);
 	
 
-	/*	*构建DBR分区 
-		*构建BPB分区
+	/*	* 构建DBR分区 
+		* 构建BPB分区
+		* 计算FAT表的长度，也就是计算FAT所占用的扇区数，然后将其写入BPB分区
 	*/
 	unsigned char bytes_per_sector[] = {0x02, 0x00};
 	fseek(fp, (long)(SECTOR*62+0x0b), SEEK_CUR);
 	fwrite(bytes_per_sector, sizeof(bytes_per_sector), 1, fp);
 	unsigned char sector_per_cluster[] = { (char)f_sector_per_cluster(size) };
 	fwrite(sector_per_cluster, sizeof(sector_per_cluster), 1, fp);
-	fclose(fp);
-
+	int sector_per_FAT_int = (size*BUFFER_SIZE) / (SECTOR*(int)sector_per_cluster[0]*1<<8);
+	unsigned char sector_per_FAT[2];
+	sector_per_FAT[0] = (char)sector_per_FAT_int>>8;
+	sector_per_FAT[1] = (char)sector_per_FAT_int;
+	fseek(fp, (long)(0x16 - 0x0d), SEEK_CUR);
+	fwrite(sector_per_FAT, sizeof(sector_per_FAT), 1, fp);
 	/* 究竟是否需要构建MBR分区和DBR分区的意义尚不明确，按照要求率先预留前64个扇区 */
 
+	/* * 构建FAT表 
+	*/
+	char not_allocate_cluster[] = { 0, 0 };
+	fseek(fp, (long)(SECTOR * 64), SEEK_SET);
+	for (int i = 0;i < sector_per_FAT_int*SECTOR;i++) {
+		fwrite(not_allocate_cluster, sizeof(not_allocate_cluster), 2, fp);
+	}
+	fclose(fp);
 	return 0;
 }
 
@@ -98,6 +111,7 @@ int read_disk() {
 	unsigned char sector_per_cluster[1];
 	fread(sector_per_cluster, sizeof(sector_per_cluster), 1, fp);
 	printf("每一簇的大小是\t%d扇区\n", hex_char_dex(sector_per_cluster, sizeof(sector_per_cluster)));
+	fclose(fp);
 	return 0;
 }
 
