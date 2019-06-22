@@ -12,12 +12,16 @@ int main() {
 		int input;
 		printf("***************FAT文件系统*******************\n");
 		printf("***************1.创建磁盘********************\n");
-		printf("***************2.读取磁盘文件******************\n");
+		printf("***************2.读取磁盘文件****************\n");
+		printf("***************0.Exit***********************\n");
 		scanf("%d", &input);
 		switch (input)
 		{
 		case 1:
 			allocate_disk();
+			break;
+		case 0:
+			return 0;
 		default:
 			break;
 		}
