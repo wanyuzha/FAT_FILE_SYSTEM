@@ -2,17 +2,10 @@
 #include<stdio.h>
 #include<math.h>
 #include<string.h>
-char buffer[BUFFER_SIZE];
+char buffer[BUFFER_SIZE] = {0};
 
 int allocate_disk();
 
-int hex_char_dex(unsigned char* hex, int length) {
-	int dex = 0;
-	for (int i = 0;i < length;i++) {
-		dex += (int)hex[i] * (int)pow(1<<8, length - 1 - i);
-	}
-	return dex;
-}
 
 int f_sector_per_cluster(int size) {
 	if (size <= 0 || size > 4096) {
@@ -57,13 +50,13 @@ int allocate_disk() {
 	FILE* fp;
 	printf("请输入要创建的虚拟磁盘大小:(单位为M)");
 	scanf("%d", &size);
-	fp = fopen("vdisk", "w");
+	fp = fopen("vdisk", "wb");
 	for (int i = 0;i < size;i++) {
 		fwrite(buffer, BUFFER_SIZE, 1, fp);
 	}
 	fclose(fp);
 	/* 构建MBR分区 */
-	fp = fopen("vdisk", "r+");
+	fp = fopen("vdisk", "rb+");
 	fseek(fp, (long)SECTOR - 2, SEEK_SET);
 	unsigned char end[] = { 0x55, 0xaa };
 	fwrite(end, sizeof(end), 1, fp);
@@ -76,30 +69,82 @@ int allocate_disk() {
 	unsigned char bytes_per_sector[] = {0x02, 0x00};
 	fseek(fp, (long)(SECTOR*62+0x0b), SEEK_CUR);
 	fwrite(bytes_per_sector, sizeof(bytes_per_sector), 1, fp);
+
 	unsigned char sector_per_cluster[] = { (char)f_sector_per_cluster(size) };
 	fwrite(sector_per_cluster, sizeof(sector_per_cluster), 1, fp);
-	int sector_per_FAT_int = (size*BUFFER_SIZE) / (SECTOR*(int)sector_per_cluster[0]*1<<8);
+	
+	unsigned char _size[2];
+	_size[0] = (char)size >> 8;
+	_size[1] = (char)size;
+	fwrite(_size, sizeof(_size), 1, fp);
+
 	unsigned char sector_per_FAT[2];
+	int sector_per_FAT_int = (size*BUFFER_SIZE) / (SECTOR*(int)sector_per_cluster[0] * 1 << 8);
 	sector_per_FAT[0] = (char)sector_per_FAT_int>>8;
 	sector_per_FAT[1] = (char)sector_per_FAT_int;
 	fseek(fp, (long)(0x16 - 0x0d), SEEK_CUR);
 	fwrite(sector_per_FAT, sizeof(sector_per_FAT), 1, fp);
+
 	/* 究竟是否需要构建MBR分区和DBR分区的意义尚不明确，按照要求率先预留前64个扇区 */
 
 	/* * 构建FAT表 
+	   * FAT表前两簇(四个字节)进行保留
+	   * 一个簇占用两个字节
 	*/
 	char not_allocate_cluster[] = { 0, 0 };
+	char first_cluster[] = {0xFF, 0xF8, 0xFF, 0XFF};
 	fseek(fp, (long)(SECTOR * 64), SEEK_SET);
-	for (int i = 0;i < sector_per_FAT_int*SECTOR;i++) {
-		fwrite(not_allocate_cluster, sizeof(not_allocate_cluster), 2, fp);
+	fwrite(first_cluster, sizeof(first_cluster), 1, fp);
+	for (int i = 0;i < sector_per_FAT_int*SECTOR / 2 - 2;i++) {
+		fwrite(not_allocate_cluster, sizeof(not_allocate_cluster), 1, fp);
 	}
+	fwrite(first_cluster, sizeof(first_cluster), 1, fp);
+	for (int i = 0;i < sector_per_FAT_int*SECTOR / 2 - 2;i++) {
+		fwrite(not_allocate_cluster, sizeof(not_allocate_cluster), 1, fp);
+	}
+
+	/*	* 构建数据区根目录项 
+		* 数据区的首簇用于存储用户信息
+		* 首簇的前64个字节用于存储每个用户所在的位置
+	*/
+	/* 
+	user_file f;
+	f.num = 1;
+	f.address[1] = 1;
+	fseek(fp, (long)((63 + sector_per_FAT_int * 2)*SECTOR), SEEK_SET);
+	fwrite(&f, sizeof(f), 1, fp);
+	*/
+	user root;
+	root.is_system = 1;
+	root.is_valid = 1;
+	strcpy(root.user_name, "root");
+	strcpy(root.password, "admin");
+	fseek(fp, (long)((64 + sector_per_FAT_int * 2)*SECTOR), SEEK_SET);
+	fwrite(&root, sizeof(root), 1, fp);
+
+	/* 数据区的第二簇用于创建根文件夹 */
+	catalog root_c;
+	strcpy(root_c.filename, "root");
+	strcpy(root_c.filename_extension, "dir");
+	strcpy(root_c.user_name, "root");
+	root_c.attribute[0] = '7';
+	root_c.attribute[1] = '7';
+	root_c.attribute[2] = '7';
+	root_c.is_valid = 1;
+	root_c.file_size = 0;
+	char cluster_index[2];
+	not_allocate_FAT_index(fp, cluster_index, sector_per_FAT_int);
+	string_copy(root_c.start_cluster, cluster_index, sizeof(cluster_index));
+	string_copy(root_c.former_cluster, cluster_index, sizeof(cluster_index));
+	fseek(fp, (long)((64 + sector_per_FAT_int * 2 + (int)sector_per_cluster[0] * 2)*SECTOR), SEEK_SET);
+	fwrite(&root_c, sizeof(root_c), 1, fp);
 	fclose(fp);
 	return 0;
 }
 
 int read_disk() {
 	FILE* fp;
-	fp = fopen("vdisk", "r");
+	fp = fopen("vdisk", "rb");
 	if (fp == NULL) {
 		printf("请先创建磁盘文件\n");
 		return 0;
@@ -123,7 +168,7 @@ int initial() {
 		printf("***************初始化系统********************\n");
 		printf("***************1.创建磁盘文件****************\n");
 		printf("***************2.查看磁盘文件信息************\n");
-		printf("***************0.返回上一级目录**************\n");
+		printf("***************3.返回上一级目录**************\n");
 		scanf("%d", &input);
 		switch (input)
 		{
